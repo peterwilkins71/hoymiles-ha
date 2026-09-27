@@ -20,45 +20,44 @@ Copy `custom_components/hoymiles_cloud` into your HA config's `custom_components
 The password is stored in the config entry (same as any cloud integration) and is
 used to log in again automatically when the token expires.
 
-## Sensors
+## Entities
 
 | Entity | Source | Refresh |
 |---|---|---|
-| Solar / Load / Grid / Battery power (W), Solar output of capacity (%) | live "burst" API | 15 s |
+| Solar power (W), Solar output of capacity (%) | live "burst" API | 5 s |
+| Producing (on/off) | live "burst" API | 5 s |
 | Energy today / this month / this year / total (kWh), Reported power, CO2 avoided | station totals | 5 min |
+
+Load, grid and battery power are not provided: without a Hoymiles meter the API
+copies solar into load and reports grid and battery as 0. Upgrading from 0.1.0
+removes those entities automatically.
 
 For the **Energy dashboard**, use *Energy total* as solar production.
 
-## 3. Dashboard card
+## Dashboard card
 
-Install **Power Flow Card Plus** from HACS (Frontend), then add a manual card
+Built-in cards only. The tile turns green while producing and grey otherwise
 (check the entity IDs in Settings → Entities; they follow your station name):
-
-```yaml
-type: custom:power-flow-card-plus
-title: Solar
-entities:
-  solar:
-    entity: sensor.hoymiles_solar_power
-    display_zero_state: true
-  home:
-    entity: sensor.hoymiles_load_power
-  grid:
-    entity: sensor.hoymiles_grid_power
-watt_threshold: 1000
-```
-
-Or with built-in cards only:
 
 ```yaml
 type: vertical-stack
 cards:
-  - type: gauge
+  - type: tile
     entity: sensor.hoymiles_solar_power
     name: Solar now
-    min: 0
-    max: 800
-    needle: true
+    color: green
+    visibility:
+      - condition: state
+        entity: binary_sensor.hoymiles_producing
+        state: "on"
+  - type: tile
+    entity: sensor.hoymiles_solar_power
+    name: Solar now
+    color: disabled
+    visibility:
+      - condition: state
+        entity: binary_sensor.hoymiles_producing
+        state: "off"
   - type: entities
     entities:
       - sensor.hoymiles_energy_today
@@ -67,6 +66,17 @@ cards:
     hours_to_show: 24
     entities:
       - sensor.hoymiles_solar_power
+```
+
+With Mushroom (HACS) a single card does it:
+
+```yaml
+type: custom:mushroom-template-card
+entity: sensor.hoymiles_solar_power
+primary: Solar now
+secondary: "{{ states(entity) }} W"
+icon: mdi:solar-power
+icon_color: "{{ 'green' if is_state('binary_sensor.hoymiles_producing', 'on') else 'grey' }}"
 ```
 
 ## Notes

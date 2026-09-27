@@ -11,7 +11,7 @@ from .api import HoymilesCloud
 from .const import CONF_STATION_ID
 from .coordinator import LiveCoordinator, TotalsCoordinator
 
-PLATFORMS = [Platform.SENSOR]
+PLATFORMS = [Platform.BINARY_SENSOR, Platform.SENSOR]
 
 
 @dataclass

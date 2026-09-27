@@ -12,12 +12,26 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import PERCENTAGE, UnitOfEnergy, UnitOfMass, UnitOfPower
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity, DataUpdateCoordinator
 
 from . import HoymilesConfigEntry
-from .const import CONF_STATION_ID, CONF_STATION_NAME, DOMAIN
+from .const import CONF_STATION_ID, CONF_STATION_NAME, DOMAIN, PRODUCING_THRESHOLD_W
+
+# Entities created by 0.1.0 that are no longer provided; removed on setup.
+_RETIRED_KEYS = ("live_load", "live_grid", "live_bat")
+
+
+def station_device(entry) -> DeviceInfo:
+    sid = entry.data[CONF_STATION_ID]
+    return DeviceInfo(
+        identifiers={(DOMAIN, str(sid))},
+        name=entry.data.get(CONF_STATION_NAME) or f"Hoymiles {sid}",
+        manufacturer="Hoymiles",
+        model="S-Miles Cloud station",
+    )
 
 
 def _num(value: Any) -> float | None:
@@ -55,11 +69,10 @@ def _energy(key: str, name: str, total: bool = False) -> HoymilesSensorDescripti
     )
 
 
+# Load, grid and battery power are deliberately absent: without a Hoymiles meter
+# the API copies PV into load and reports grid and battery as 0.
 LIVE_SENSORS = (
     _power("pv", "Solar power"),
-    _power("load", "Load power"),
-    _power("grid", "Grid power"),
-    _power("bat", "Battery power"),
     HoymilesSensorDescription(
         key="live_pvr", name="Solar output of capacity",
         native_unit_of_measurement=PERCENTAGE,
@@ -97,12 +110,11 @@ async def async_setup_entry(
 ) -> None:
     data = entry.runtime_data
     sid = entry.data[CONF_STATION_ID]
-    device = DeviceInfo(
-        identifiers={(DOMAIN, str(sid))},
-        name=entry.data.get(CONF_STATION_NAME) or f"Hoymiles {sid}",
-        manufacturer="Hoymiles",
-        model="S-Miles Cloud station",
-    )
+    registry = er.async_get(hass)
+    for key in _RETIRED_KEYS:
+        if entity_id := registry.async_get_entity_id("sensor", DOMAIN, f"{sid}_{key}"):
+            registry.async_remove(entity_id)
+    device = station_device(entry)
     async_add_entities(
         [HoymilesSensor(data.live, d, sid, device) for d in LIVE_SENSORS]
         + [HoymilesSensor(data.totals, d, sid, device) for d in TOTAL_SENSORS]
@@ -122,3 +134,10 @@ class HoymilesSensor(CoordinatorEntity[DataUpdateCoordinator[dict[str, Any]]], S
     @property
     def native_value(self):
         return self.entity_description.value(self.coordinator.data or {})
+
+    @property
+    def icon(self) -> str | None:
+        if self.entity_description.key != "live_pv":
+            return super().icon
+        producing = (self.native_value or 0) > PRODUCING_THRESHOLD_W
+        return "mdi:solar-power" if producing else "mdi:solar-power-variant-outline"
