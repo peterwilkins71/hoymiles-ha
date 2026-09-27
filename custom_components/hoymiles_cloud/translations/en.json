@@ -1,0 +1,29 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Hoymiles S-Miles Cloud",
+        "description": "Sign in with your S-Miles Cloud (global.hoymiles.com) account.",
+        "data": {"username": "Login account", "password": "Password"}
+      },
+      "station": {
+        "title": "Choose station",
+        "data": {"station_id": "Station"}
+      },
+      "reauth_confirm": {
+        "title": "Sign in again",
+        "description": "Hoymiles rejected the saved password. Enter it again.",
+        "data": {"password": "Password"}
+      }
+    },
+    "error": {
+      "invalid_auth": "Hoymiles rejected the login.",
+      "cannot_connect": "Could not reach the Hoymiles cloud.",
+      "no_stations": "This account has no stations."
+    },
+    "abort": {
+      "already_configured": "This station is already set up.",
+      "reauth_successful": "Signed in again."
+    }
+  }
+}
