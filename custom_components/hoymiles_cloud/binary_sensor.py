@@ -31,7 +31,15 @@ class ProducingSensor(CoordinatorEntity[LiveCoordinator], BinarySensorEntity):
         self._attr_device_info = station_device(entry)
 
     @property
+    def available(self) -> bool:
+        # No live data (e.g. the inverter is off overnight) reads as "not producing"
+        # rather than unavailable, so cards keyed on this state keep working.
+        return True
+
+    @property
     def is_on(self) -> bool | None:
+        if not self.coordinator.last_update_success:
+            return False
         power = (self.coordinator.data or {}).get("power") or {}
         try:
             return float(power.get("pv")) > PRODUCING_THRESHOLD_W

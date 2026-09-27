@@ -20,6 +20,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import logging
+import time
 from typing import Any
 
 import aiohttp
@@ -32,6 +33,8 @@ HOST_EU = "https://euapi.hoymiles.com"
 DC_EU = 1
 
 TIMEOUT = aiohttp.ClientTimeout(total=30)
+# Minimum gap between live-session renewals when the station gives no live data.
+BURST_RENEW_MIN_S = 60
 
 
 class HoymilesError(Exception):
@@ -72,6 +75,7 @@ class HoymilesCloud:
         self._password = password
         self._token: str | None = None
         self._burst_uri: dict[int, str] = {}
+        self._burst_renewed: dict[int, float] = {}
 
     async def _post(self, url: str, payload: dict[str, Any], auth: bool = True) -> dict[str, Any]:
         headers = {"Content-Type": "application/json", "Accept": "application/json"}
@@ -141,24 +145,49 @@ class HoymilesCloud:
             f"{HOST_GLOBAL}/pvm-data/api/0/station/data/count_station_real_data", {"sid": sid}
         ) or {}
 
+    async def _new_burst_uri(self, sid: int) -> str:
+        """Ask for a fresh live-data URI, which also starts a new live session."""
+        data = await self._call(f"{HOST_GLOBAL}/pvm/api/0/station/get_sd_uri", {"sid": sid})
+        uri = (data or {}).get("uri")
+        if not uri:
+            raise HoymilesError("No live-data URI for station")
+        self._burst_uri[sid] = uri
+        self._burst_renewed[sid] = time.monotonic()
+        return uri
+
     async def live(self, sid: int) -> dict[str, Any]:
-        """Near real-time power ("burst") data: {power: {pv, load, grid, bat, pvr, sp}, flow, t}."""
+        """Near real-time power ("burst") data: {power: {pv, pvr, ...}, flow, t, dly}.
+
+        A live session is finite. The web app keeps polling only while a response
+        carries ``dly`` (the next poll delay, in ms); once a response lacks it the
+        session has ended, and later polls still return status "0" but no ``power``.
+        So a reading without ``power`` means: start a new session and try again.
+        """
         for attempt in range(2):
             uri = self._burst_uri.get(sid)
             if not uri or attempt:
-                data = await self._call(f"{HOST_GLOBAL}/pvm/api/0/station/get_sd_uri", {"sid": sid})
-                uri = (data or {}).get("uri")
-                if not uri:
-                    raise HoymilesError("No live-data URI for station")
-                self._burst_uri[sid] = uri
+                # Renewal starts a session on the device side; don't do it on every
+                # poll if the station is genuinely not answering (e.g. at night).
+                since = time.monotonic() - self._burst_renewed.get(sid, float("-inf"))
+                if uri and since < BURST_RENEW_MIN_S:
+                    break
+                uri = await self._new_burst_uri(sid)
             try:
                 body = await self._post(uri, {"m": 0, "t": 1, "reflux": 0})
             except aiohttp.ClientResponseError:
+                self._burst_uri.pop(sid, None)
                 if attempt:
                     raise
                 continue
-            if str(body.get("status")) == "0" and body.get("data"):
-                return body["data"]
             if _is_token_error(body):
                 await self.login()
-        raise HoymilesError("Live data unavailable")
+                continue
+            data = body.get("data") if str(body.get("status")) == "0" else None
+            if isinstance(data, dict) and data.get("power"):
+                if not data.get("dly"):
+                    # Last reading of this session: renew on the next poll.
+                    self._burst_uri.pop(sid, None)
+                return data
+            _LOGGER.debug("Live session ended for %s (response keys: %s); renewing",
+                          sid, sorted(data) if isinstance(data, dict) else type(data).__name__)
+        raise HoymilesError("Live data not available (is the inverter online?)")
